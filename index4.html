@@ -67,8 +67,6 @@
             const STATUS_BASE_URL = "https://c2t.ddns.net:81";
             const COUNTDOWN_SECONDS = 2;
             const FETCH_TIMEOUT_MS = 2500;
-            const CACHE_TTL_MS = 15000;
-            const CACHE_KEY = "twcs_pk_cd_status_v1";
 
             const SERVERS = {
                 a: { key: "a", titleLabel: "１ v １ - A", descLabel: "１ v １ - A 服 (27018)", btnLabel: "1 v 1-A (27018)", port: 27018, alwaysOnline: true },
@@ -89,46 +87,33 @@
             async function checkOneServer(srv) {
                 const controller = new AbortController();
                 const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-                const url = `${STATUS_BASE_URL}/status_${srv.port}.json`;
+                const url = `${STATUS_BASE_URL}/status_${srv.port}.json?t=${Date.now()}`;
                 try {
-                    const res = await fetch(url, { signal: controller.signal });
-                    if (res.status === 404) return false;
+                    const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
                     if (!res.ok) {
-                        console.warn(`[狀態偵測] ${url} HTTP ${res.status}`);
-                        return true;
+                        console.warn(`[狀態偵測] ${srv.port} HTTP ${res.status} -> 判為未開`);
+                        return false;
                     }
                     const data = await res.json();
-                    const p = String(data?.players ?? "").trim().toUpperCase();
-                    return p !== "" && p !== "OFFLINE" && p !== "ERROR";
+                    const players = String(data?.players ?? "").trim();
+                    const map = String(data?.map ?? "").trim().toUpperCase();
+                    const isOnline = /^\d+\s*\/\s*[1-9]\d*$/.test(players) && map !== "OFFLINE";
+                    console.log(`[狀態偵測] ${srv.port}:`, { players, map, isOnline });
+                    return isOnline;
                 } catch (err) {
-                    console.warn(`[狀態偵測失敗] ${url}:`, err);
-                    return true;
+                    console.warn(`[狀態偵測失敗] ${srv.port} (CORS/憑證/逾時/網路) -> 判為未開:`, err);
+                    return false;
                 } finally {
                     clearTimeout(timer);
                 }
             }
 
             async function loadDynamicStatus() {
-                try {
-                    const raw = sessionStorage.getItem(CACHE_KEY);
-                    if (raw) {
-                        const cached = JSON.parse(raw);
-                        if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS && cached.status) {
-                            return cached.status;
-                        }
-                    }
-                } catch {}
-
                 const [c, d] = await Promise.all([
                     checkOneServer(SERVERS.c),
                     checkOneServer(SERVERS.d)
                 ]);
-                const status = { c, d };
-
-                try {
-                    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), status }));
-                } catch {}
-                return status;
+                return { c, d };
             }
 
             const target = SERVERS[TARGET_SERVER] || SERVERS.a;
